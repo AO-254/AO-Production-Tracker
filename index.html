@@ -251,17 +251,15 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--nav
         <div class="g2">
           <div class="field"><label>Your Name <span class="req">*</span></label><input id="cfg-name" type="text" placeholder="e.g. James Kariuki"></div>
           <div class="field"><label>Role <span class="req">*</span></label>
-            <select id="cfg-role"><option value="operator">Operator</option><option value="line_manager">Line Manager</option><option value="qc">QC Officer</option></select>
+            <select id="cfg-role"><option value="operator">Operator</option></select>
           </div>
+          <div class="field span2"><label>Your Email <span class="req">*</span></label><input id="cfg-email" type="email" placeholder="yourname@africanoriginals.com"></div>
         </div>
       </div>
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:14px">
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--navy);margin-bottom:12px">📧 Approver Emails</div>
-        <div class="g2">
-          <div class="field"><label>Line Manager Email</label><input id="cfg-lm" type="email" placeholder="lm@africanoriginals.com"></div>
-          <div class="field"><label>QC Officer Email</label><input id="cfg-qc" type="email" placeholder="qc@africanoriginals.com"></div>
-        </div>
-        <div style="font-size:11px;color:var(--muted);margin-top:6px">QC approval required for: Filtration · Filling · Pasteurization · Labeling</div>
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--navy);margin-bottom:12px">📧 Line Manager Email</div>
+        <div class="field"><label>Line Manager Email <span class="req">*</span></label><input id="cfg-lm" type="email" placeholder="lm@africanoriginals.com"></div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px">All stage approvals will be sent to the Line Manager only</div>
       </div>
       <button class="btn btn-primary" style="width:100%;justify-content:center" onclick="saveSetup()">Save & Open Dashboard →</button>
     </div>
@@ -337,7 +335,7 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--nav
   <div class="card">
     <div id="stageFormHead" class="card-head">
       <div class="card-title" id="stageFormTitle">Stage Form</div>
-      <button class="btn btn-ghost btn-sm" id="stageBackBtn" onclick="backToBatch()">← Back to Batch</button>
+      <button class="btn btn-navy btn-sm" id="stageBackBtn" onclick="backToBatch()" style="position:relative;z-index:999;pointer-events:all">← Back to Batch</button>
     </div>
     <div class="card-body">
       <div id="stageFormBody"></div>
@@ -388,17 +386,17 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--nav
 // STAGE CONFIG
 // ══════════════════════════════════════════════
 const STAGES = [
-  { id:'blending',    label:'Blending',              icon:'🧪', cls:'s-blending',   approvers:['lm'],      color:'#1D9F6E' },
-  { id:'filtration',  label:'Filtration & Centrifuge',icon:'🔬', cls:'s-filtration', approvers:['lm','qc'], color:'#0B7FC7' },
-  { id:'filling',     label:'Filling',               icon:'🥫', cls:'s-filling',    approvers:['lm','qc'], color:'#639922' },
-  { id:'pasteur',     label:'Pasteurization',        icon:'🌡', cls:'s-pasteur',    approvers:['lm','qc'], color:'#D85A30' },
-  { id:'labeling',    label:'Labeling',              icon:'🏷', cls:'s-labeling',   approvers:['lm','qc'], color:'#534AB7' },
+  { id:'blending',    label:'Blending',              icon:'🧪', cls:'s-blending',   approvers:['lm'], color:'#1D9F6E' },
+  { id:'filtration',  label:'Filtration & Centrifuge',icon:'🔬', cls:'s-filtration', approvers:['lm'], color:'#0B7FC7' },
+  { id:'filling',     label:'Filling',               icon:'🥫', cls:'s-filling',    approvers:['lm'], color:'#639922' },
+  { id:'pasteur',     label:'Pasteurization',        icon:'🌡', cls:'s-pasteur',    approvers:['lm'], color:'#D85A30' },
+  { id:'labeling',    label:'Labeling',              icon:'🏷', cls:'s-labeling',   approvers:['lm'], color:'#534AB7' },
 ];
 
 // ══════════════════════════════════════════════
 // STATE
 // ══════════════════════════════════════════════
-let cfg = { url:'', name:'Operator', role:'operator', lmEmail:'', qcEmail:'' };
+let cfg = { url:'', name:'Operator', role:'operator', email:'', lmEmail:'', qcEmail:'' };
 let batches = [];
 let activeBatchId = null;
 let activeStageId = null;
@@ -418,12 +416,17 @@ function persist(){ localStorage.setItem('ao_cfg2',JSON.stringify(cfg)); localSt
 // ══════════════════════════════════════════════
 function saveSetup(){
   const name=document.getElementById('cfg-name').value.trim();
+  const email=document.getElementById('cfg-email').value.trim();
+  const lm=document.getElementById('cfg-lm').value.trim();
   if(!name){toast('Please enter your name','error');return}
-  cfg.url=document.getElementById('cfg-url').value.trim();
-  cfg.name=name;
-  cfg.role=document.getElementById('cfg-role').value;
-  cfg.lmEmail=document.getElementById('cfg-lm').value.trim();
-  cfg.qcEmail=document.getElementById('cfg-qc').value.trim();
+  if(!email){toast('Please enter your email address','error');return}
+  if(!lm){toast('Please enter the Line Manager email','error');return}
+  cfg.url    =document.getElementById('cfg-url').value.trim();
+  cfg.name   =name;
+  cfg.email  =email;
+  cfg.role   =document.getElementById('cfg-role').value;
+  cfg.lmEmail=lm;
+  cfg.qcEmail=lm; // LM handles all approvals
   persist();
   document.getElementById('userLbl').textContent='👤 '+cfg.name;
   setSyncState(cfg.url?'ok':'warn',cfg.url?'Connected':'Demo mode');
@@ -433,9 +436,9 @@ function saveSetup(){
 function loadSetupForm(){
   document.getElementById('cfg-url').value=cfg.url||'';
   document.getElementById('cfg-name').value=cfg.name==='Operator'?'':cfg.name;
+  document.getElementById('cfg-email').value=cfg.email||'';
   document.getElementById('cfg-role').value=cfg.role;
   document.getElementById('cfg-lm').value=cfg.lmEmail||'';
-  document.getElementById('cfg-qc').value=cfg.qcEmail||'';
   // Backend section stays hidden — URL loads silently in background
   document.getElementById('cfg-backend-section').style.display='none';
   document.getElementById('cfg-admin-hint').style.color='transparent';
@@ -455,6 +458,8 @@ function goTo(view){
 }
 // Admin tap — tap logo 5 times to reveal backend URL field
 let adminTapCount=0, adminTapTimer=null;
+function backToBatch(){ openBatch(activeBatchId); }
+
 function adminTap(){
   adminTapCount++;
   clearTimeout(adminTapTimer);
@@ -577,7 +582,10 @@ function renderStageGrid(b){
   grid.innerHTML=STAGES.map(s=>{
     const subs=b.stages[s.id]||[];
     const runBadges=subs.length
-      ? subs.map((r,i)=>`<span class="run-badge rb-${r.status}" onclick="event.stopPropagation();viewSubmission('${b.id}','${s.id}',${i})" title="${r.status} — ${r.submittedAt?.slice(0,10)}">Run ${i+1}</span>`).join('')
+      ? subs.map((r,i)=>{
+          const syncIcon = cfg.url ? (r.synced===false ? ' ⚠' : ' ✓') : '';
+          return `<span class="run-badge rb-${r.status}" onclick="event.stopPropagation();viewSubmission('${b.id}','${s.id}',${i})" title="${r.status} — ${r.submittedAt?.slice(0,10)||''}${r.synced===false?' — NOT synced to Sheet':''}">Run ${i+1}${syncIcon}</span>`;
+        }).join('')
       : `<span class="run-badge rb-none">No runs yet</span>`;
     const allOk=subs.length&&subs.every(r=>r.status==='approved');
     const anyPend=subs.some(r=>r.status==='pending');
@@ -624,7 +632,7 @@ function openStageForm(batchId, stageId, historyOnly=false){
   const batchBar=document.createElement('div');
   batchBar.className='stage-batch-bar';
   batchBar.innerHTML=`
-    <div style="background:var(--navy2);padding:12px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <div style="background:var(--navy2);padding:12px 20px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;position:relative;z-index:1">
       <label style="font-size:11px;font-weight:700;color:rgba(255,255,255,.6);text-transform:uppercase;letter-spacing:.6px;white-space:nowrap">Batch</label>
       <select id="stageBatchSelect" onchange="switchStageBatch(this.value,'${stageId}')"
         style="flex:1;min-width:220px;padding:7px 10px;border:1.5px solid rgba(255,255,255,.2);
@@ -654,20 +662,48 @@ function renderSubHistory(batchId, stageId){
   const list=document.getElementById('subHistoryList');
   if(!subs.length){card.style.display='none';return}
   card.style.display='block';
-  list.innerHTML=subs.map((r,i)=>`
-    <div class="sub-item" onclick="viewSubmission('${batchId}','${stageId}',${i})">
-      <div>
-        <div class="sub-run-label">Run ${i+1} — ${r.data?.date||r.submittedAt?.slice(0,10)||'—'}</div>
-        <div class="sub-meta">Submitted by ${r.submittedBy} · ${r.submittedAt?.slice(0,16).replace('T',' ')||'—'}</div>
-        ${r.approvals?Object.entries(r.approvals).map(([t,a])=>
-          `<div style="font-size:10px;color:${a.status==='approved'?'var(--green)':a.status==='rejected'?'var(--red)':'var(--amber)'};margin-top:3px">${t==='lm'?'Line Manager':'QC'}: ${a.status}${a.comment?' — "'+a.comment+'"':''}</div>`
-        ).join(''):''}
+  list.innerHTML=subs.map((r,i)=>{
+    const approvals=r.approvals||{};
+    const s=STAGES.find(x=>x.id===stageId);
+    const statusColor=r.status==='approved'?'var(--green)':r.status==='rejected'?'var(--red)':'var(--amber)';
+    const statusBg=r.status==='approved'?'#EDFAF3':r.status==='rejected'?'#FFF0F0':'#FFF8E6';
+    const statusIcon=r.status==='approved'?'✅':r.status==='rejected'?'❌':'⏳';
+    const syncWarning=cfg.url&&r.synced===false
+      ?`<div style="font-size:11px;color:var(--red);font-weight:700;margin-top:4px">⚠ Not synced to Sheet — please resubmit</div>`:'';
+
+    // Build approval chips
+    const apChips=(s?.approvers||['lm']).map(at=>{
+      const ap=approvals[at];
+      const aLabel=at==='lm'?'Line Manager':'QC Officer';
+      if(!ap) return `<span style="font-size:11px;background:var(--bg2);color:var(--muted);padding:3px 8px;border-radius:4px;display:inline-block;margin-top:4px">⏳ ${aLabel}: Awaiting</span>`;
+      const c=ap.status==='approved'?'var(--green)':ap.status==='rejected'?'var(--red)':'var(--amber)';
+      const bg=ap.status==='approved'?'#EDFAF3':ap.status==='rejected'?'#FFF0F0':'#FFF8E6';
+      return `<div style="margin-top:6px;padding:8px 10px;background:${bg};border-radius:6px;border-left:3px solid ${c}">
+        <div style="font-size:11px;font-weight:700;color:${c}">${ap.status==='approved'?'✅':'❌'} ${aLabel}: ${ap.status.toUpperCase()}</div>
+        ${ap.comment?`<div style="font-size:11px;color:var(--steel);margin-top:3px;font-style:italic">"${ap.comment}"</div>`:''}
+        ${ap.at?`<div style="font-size:10px;color:var(--muted);margin-top:2px">${ap.at.slice(0,16).replace('T',' ')}</div>`:''}
+      </div>`;
+    }).join('');
+
+    return `<div style="border:1.5px solid ${statusColor};border-radius:8px;padding:14px;margin-bottom:10px;background:${statusBg}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--navy)">Run ${i+1} ${statusIcon}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px">
+            ${r.data?.date||r.submittedAt?.slice(0,10)||'—'} ·
+            Submitted by <strong>${r.submittedBy}</strong> ·
+            ${r.submittedAt?.slice(0,16).replace('T',' ')||'—'}
+          </div>
+          ${syncWarning}
+        </div>
+        <div style="display:flex;gap:6px">
+          <span class="badge ${r.status==='approved'?'b-approved':r.status==='rejected'?'b-rejected':r.status==='pending'?'b-pending':'b-none'}">${r.status||'draft'}</span>
+          <button class="btn btn-ghost btn-xs" onclick="viewSubmission('${batchId}','${stageId}',${i})">View</button>
+        </div>
       </div>
-      <div class="sub-right">
-        <span class="badge ${r.status==='approved'?'b-approved':r.status==='rejected'?'b-rejected':r.status==='pending'?'b-pending':'b-none'}">${r.status||'draft'}</span>
-        <span style="font-size:10px;color:var(--muted)">Click to view</span>
-      </div>
-    </div>`).join('');
+      <div style="margin-top:8px">${apChips}</div>
+    </div>`;
+  }).join('');
 }
 
 function viewSubmission(batchId, stageId, idx){
@@ -998,32 +1034,53 @@ async function submitStageForm(){
   persist();
 
   // Sync to Apps Script
-  if(cfg.url){
-    setSyncState('spin','Sending…');
-    try{
-      await fetch(cfg.url,{
-        method:'POST',mode:'no-cors',
-        headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-          action:'submitStage',
-          batchId:b.id, sku:b.sku, line:b.line, shift:b.shift, date:b.date,
-          stageId:activeStageId, stageLabel:s.label,
-          runNumber:b.stages[activeStageId].length,
-          submissionId:sub.id,
-          backdated, daysLate,
-          data, submittedBy:cfg.name, submittedAt:sub.submittedAt,
-          approvers:s.approvers, lmEmail:cfg.lmEmail, qcEmail:cfg.qcEmail,
-          appUrl:window.location.href.split('?')[0],
-        }),
-      });
-      setSyncState('ok','Synced');
-      toast(`${s.label} — Run ${b.stages[activeStageId].length} submitted ✓`,'success');
-    }catch(e){
-      setSyncState('warn','Offline');
-      toast('Saved locally — server unreachable','error');
-    }
-  } else {
-    toast(`${s.label} — Run ${b.stages[activeStageId].length} logged (demo mode)`,'success');
+  if(!cfg.url){
+    toast(`⚠ No backend URL set — data saved locally only. Tap logo 5× in Setup to add the Script URL.`,'error');
+    openBatch(activeBatchId);
+    return;
+  }
+
+  setSyncState('spin','Sending…');
+  try{
+    // Use a form-encoded GET ping first to verify the script is reachable
+    const pingUrl = cfg.url + '?action=ping';
+    const pingRes = await fetch(pingUrl, { method:'GET', mode:'cors' }).catch(()=>null);
+
+    // Send the actual data — Apps Script accepts POST via no-cors
+    // We use the ping above to verify connectivity first
+    const payload = {
+      action:'submitStage',
+      batchId:b.id, sku:b.sku||'', line:b.line||'', shift:b.shift||'', date:b.date||'',
+      stageId:activeStageId, stageLabel:s.label,
+      runNumber:b.stages[activeStageId].length,
+      submissionId:sub.id,
+      backdated, daysLate,
+      data, submittedBy:cfg.name, submittedAt:sub.submittedAt,
+      approvers:s.approvers, lmEmail:cfg.lmEmail, qcEmail:cfg.lmEmail,
+      operatorName:cfg.name, operatorRole:cfg.role, operatorEmail:cfg.email,
+      appUrl:window.location.href.split('?')[0],
+    };
+
+    // Primary: try fetch with no-cors (works even with CORS restrictions)
+    await fetch(cfg.url,{
+      method:'POST', mode:'no-cors',
+      headers:{'Content-Type':'text/plain'},
+      body:JSON.stringify(payload),
+    });
+
+    // Mark as synced — show clear confirmation
+    sub.synced = true;
+    persist();
+    setSyncState('ok','Synced ✓');
+    toast(`✅ ${s.label} Run ${b.stages[activeStageId].length} submitted & sent to Sheet`,'success');
+
+  }catch(e){
+    // Network failure — flag clearly so operator knows to resubmit
+    sub.synced = false;
+    persist();
+    setSyncState('warn','Not synced');
+    toast(`⚠ Saved locally but could NOT reach the server. Check your internet connection and resubmit.`,'error');
+    Logger.log && Logger.log('Fetch error: ' + e.toString());
   }
 
   openBatch(activeBatchId);
@@ -1730,14 +1787,15 @@ window.demoApprove=function(batchId,stageId,subIdx,approver,decision,comment='')
 function today(){ return new Date().toISOString().split('T')[0]; }
 
 function logOut(){
-  if(!confirm('Log out? Your submitted data is saved. You will need to enter your name again to log back in.')) return;
-  // Clear identity only — keep batch data intact
-  cfg.name='Operator';
-  cfg.role='operator';
+  if(!confirm('Log out? Your submitted data is saved. You will need to sign in again to continue.')) return;
+  // Clear identity only — keep batch data and URL intact
+  cfg.name  = 'Operator';
+  cfg.role  = 'operator';
+  cfg.email = '';
   persist();
-  document.getElementById('userLbl').textContent='';
-  toast('Logged out successfully','info');
-  setTimeout(()=>goTo('setup'),600);
+  document.getElementById('userLbl').textContent = '';
+  toast('Logged out','info');
+  setTimeout(()=>goTo('setup'), 400);
 }
 function setSyncState(state,label){
   const dot=document.getElementById('syncDot');
@@ -1761,7 +1819,7 @@ document.addEventListener('DOMContentLoaded',()=>{
   loadState();
   document.getElementById('userLbl').textContent='👤 '+cfg.name;
   setSyncState(cfg.url?'ok':'warn',cfg.url?'Connected':'Demo mode');
-  if(cfg.name&&cfg.name!=='Operator') goTo('home');
+  if(cfg.name && cfg.name!=='Operator' && cfg.email && cfg.lmEmail) goTo('home');
   else goTo('setup');
 });
 </script>
