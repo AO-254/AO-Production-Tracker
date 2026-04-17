@@ -319,7 +319,10 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--nav
           <span id="bb-notes-wrap" style="display:none"><strong>Notes:</strong> <span id="bb-notes">—</span></span>
         </div>
       </div>
-      <button class="btn btn-ghost btn-sm" style="color:rgba(255,255,255,.6);border-color:rgba(255,255,255,.2)" onclick="goTo('home')">← All Batches</button>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+        <button class="btn btn-ghost btn-sm" style="color:rgba(255,255,255,.6);border-color:rgba(255,255,255,.2)" onclick="goTo('home')">← All Batches</button>
+        <button class="btn btn-ghost btn-xs" style="color:rgba(255,255,255,.5);border-color:rgba(255,255,255,.15)" onclick="manualRefresh()" title="Check for new approvals">↻ Refresh Status</button>
+      </div>
     </div>
     <div class="card-body">
       <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Select any stage to log a new run. Stages can be filled in any order — multiple runs per stage are supported.</div>
@@ -460,6 +463,15 @@ function goTo(view){
 let adminTapCount=0, adminTapTimer=null;
 function backToBatch(){ openBatch(activeBatchId); }
 
+async function manualRefresh(){
+  if(!cfg.url){ toast('No backend URL configured','error'); return; }
+  setSyncState('spin','Checking…');
+  await pollApprovalStatus();
+  setSyncState('ok','Done');
+  const b=batches.find(x=>x.id===activeBatchId);
+  if(b) renderStageGrid(b);
+}
+
 function adminTap(){
   adminTapCount++;
   clearTimeout(adminTapTimer);
@@ -572,6 +584,8 @@ function openBatch(id){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   document.getElementById('view-batch').classList.add('active');
   window.scrollTo(0,0);
+  // Immediately check for any new approvals
+  if(cfg.url) setTimeout(pollApprovalStatus, 500);
 }
 
 // ══════════════════════════════════════════════
@@ -1784,6 +1798,105 @@ window.demoApprove=function(batchId,stageId,subIdx,approver,decision,comment='')
 // ══════════════════════════════════════════════
 // UTILITIES
 // ══════════════════════════════════════════════
+// ══════════════════════════════════════════════
+// APPROVAL STATUS POLLING
+// Polls Apps Script every 30s when any batch
+// has pending submissions — syncs decisions
+// back into localStorage and refreshes the UI
+// ══════════════════════════════════════════════
+let pollTimer = null;
+
+function startPolling() {
+  stopPolling();
+  pollTimer = setInterval(pollApprovalStatus, 30000);
+}
+
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+async function pollApprovalStatus() {
+  if (!cfg.url) return;
+
+  // Find all batches that have at least one pending submission
+  const pendingBatches = batches.filter(b =>
+    Object.values(b.stages).some(subs =>
+      subs.some(s => s.status === 'pending')
+    )
+  );
+  if (!pendingBatches.length) { stopPolling(); return; }
+
+  for (const b of pendingBatches) {
+    try {
+      const res = await fetch(`${cfg.url}?action=getStatus&batchId=${encodeURIComponent(b.id)}`, {
+        method: 'GET', mode: 'cors',
+      });
+      if (!res.ok) continue;
+      const json = await res.json();
+      if (!json.decisions || !json.decisions.length) continue;
+
+      let changed = false;
+
+      // Apply each decision to the matching submission
+      json.decisions.forEach(dec => {
+        const stageId = dec.stageId;
+        const subs    = b.stages[stageId] || [];
+
+        subs.forEach(sub => {
+          // Match by submissionId or by stageId+runNumber
+          const isMatch = sub.id === dec.submissionId ||
+            (sub.stageId === dec.stageId && b.stages[stageId].indexOf(sub) + 1 == dec.runNumber);
+
+          if (!isMatch) return;
+          if (sub.status === 'approved') return; // already finalised
+
+          // Record this approval decision
+          sub.approvals = sub.approvals || {};
+          const existing = sub.approvals[dec.approverType];
+          if (existing && existing.at === dec.at) return; // already recorded
+
+          sub.approvals[dec.approverType] = {
+            status:  dec.decision,
+            comment: dec.comment,
+            by:      dec.approverType,
+            at:      dec.at,
+          };
+          changed = true;
+
+          // Check if all required approvers have responded
+          const stage = STAGES.find(s => s.id === stageId);
+          const required = stage?.approvers || ['lm'];
+          const allDone  = required.every(a => sub.approvals[a]);
+          const anyRej   = required.some(a => sub.approvals[a]?.status === 'rejected');
+
+          if (allDone && !anyRej) {
+            sub.status = 'approved';
+          } else if (anyRej) {
+            sub.status = 'rejected';
+          }
+        });
+      });
+
+      if (changed) {
+        persist();
+        // Refresh UI if currently viewing this batch
+        if (activeBatchId === b.id) {
+          const currentView = document.querySelector('.view.active')?.id;
+          if (currentView === 'view-batch') {
+            renderStageGrid(b);
+          } else if (currentView === 'view-stage') {
+            renderSubHistory(b.id, activeStageId);
+          }
+          setSyncState('ok', 'Updated ✓');
+          toast(`✅ Approval status updated for batch ${b.id}`, 'success');
+        }
+      }
+    } catch (err) {
+      // Silent fail — will retry next interval
+    }
+  }
+}
+
 function today(){ return new Date().toISOString().split('T')[0]; }
 
 function logOut(){
@@ -1821,6 +1934,8 @@ document.addEventListener('DOMContentLoaded',()=>{
   setSyncState(cfg.url?'ok':'warn',cfg.url?'Connected':'Demo mode');
   if(cfg.name && cfg.name!=='Operator' && cfg.email && cfg.lmEmail) goTo('home');
   else goTo('setup');
+  // Start polling for approval updates if URL is configured
+  if(cfg.url) startPolling();
 });
 </script>
 </body>
