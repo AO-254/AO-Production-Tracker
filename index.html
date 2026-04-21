@@ -374,6 +374,7 @@ body{font-family:'IBM Plex Sans',sans-serif;background:var(--bg);color:var(--nav
       <span style="font-size:11px;color:var(--muted)" id="subModalStatus"></span>
       <div style="display:flex;gap:8px">
         <button class="btn btn-ghost btn-sm" id="subModalJsonBtn" onclick="toggleSubModalJson()">{ } View Raw JSON</button>
+        <button class="btn btn-primary btn-sm" id="subModalEditBtn" style="display:none" onclick="editFromModal()">✏ Edit & Resubmit</button>
         <button class="btn btn-ghost btn-sm" onclick="document.getElementById('subModal').style.display='none'">Close</button>
       </div>
     </div>
@@ -461,7 +462,7 @@ function goTo(view){
 }
 // Admin tap — tap logo 5 times to reveal backend URL field
 let adminTapCount=0, adminTapTimer=null;
-function backToBatch(){ openBatch(activeBatchId); }
+function backToBatch(){ editingSubIdx=null; openBatch(activeBatchId); }
 
 async function manualRefresh(){
   if(!cfg.url){ toast('No backend URL configured','error'); return; }
@@ -710,9 +711,10 @@ function renderSubHistory(batchId, stageId){
           </div>
           ${syncWarning}
         </div>
-        <div style="display:flex;gap:6px">
+        <div style="display:flex;gap:6px;align-items:center">
           <span class="badge ${r.status==='approved'?'b-approved':r.status==='rejected'?'b-rejected':r.status==='pending'?'b-pending':'b-none'}">${r.status||'draft'}</span>
           <button class="btn btn-ghost btn-xs" onclick="viewSubmission('${batchId}','${stageId}',${i})">View</button>
+          ${r.status==='rejected'?`<button class="btn btn-primary btn-xs" onclick="editRejected('${batchId}','${stageId}',${i})">✏ Edit & Resubmit</button>`:''}
         </div>
       </div>
       <div style="margin-top:8px">${apChips}</div>
@@ -731,10 +733,14 @@ function viewSubmission(batchId, stageId, idx){
   document.getElementById('subModalMeta').textContent=
     `Submitted by ${sub.submittedBy} · ${sub.submittedAt?.slice(0,16).replace('T',' ')||'—'} · Batch ${batchId}`;
 
-  // Status line
+  // Track context for Edit button
+  document._subModalCtx = { batchId, stageId, idx };
+
+  // Status line + show Edit button only for rejected
   const sEl=document.getElementById('subModalStatus');
   const statusColour=sub.status==='approved'?'var(--green)':sub.status==='rejected'?'var(--red)':'var(--amber)';
   sEl.innerHTML=`Status: <strong style="color:${statusColour};text-transform:uppercase">${sub.status}</strong>`;
+  document.getElementById('subModalEditBtn').style.display = sub.status==='rejected' ? '' : 'none';
 
   // Store raw JSON for toggle
   document.getElementById('subModalJson').textContent=JSON.stringify(sub,null,2);
@@ -985,6 +991,151 @@ function sdRow(label, value, extraCls='', highlight=false, span=false){
   </div>`;
 }
 
+// ── EDIT REJECTED SUBMISSION ───────────────────────────
+// Called from modal footer or history "Edit & Resubmit" button
+
+function editFromModal(){
+  const ctx = document._subModalCtx;
+  if(!ctx) return;
+  document.getElementById('subModal').style.display='none';
+  editRejected(ctx.batchId, ctx.stageId, ctx.idx);
+}
+
+// editingSubIdx — when set, submitStageForm overwrites this entry instead of pushing a new one
+let editingSubIdx = null;
+
+function editRejected(batchId, stageId, idx){
+  activeBatchId = batchId;
+  activeStageId = stageId;
+  editingSubIdx = idx;
+
+  const b = batches.find(x=>x.id===batchId);
+  const s = STAGES.find(x=>x.id===stageId);
+  const sub = b?.stages[stageId]?.[idx];
+  if(!b||!s||!sub) return;
+
+  // Open the stage form view with a fresh form, then populate it
+  openStageForm(batchId, stageId);
+
+  // openStageForm renders the HTML synchronously — populate immediately after
+  populateForm(stageId, sub.data);
+
+  // Change submit button label to make it clear this is a resubmission
+  const actionsEl = document.getElementById('stageFormActions');
+  if(actionsEl){
+    const submitBtn = actionsEl.querySelector('.btn-primary');
+    if(submitBtn) submitBtn.textContent = '↩ Resubmit for Approval →';
+  }
+
+  // Show banner explaining this is an edit
+  const existingBanner = document.getElementById('editWarningBanner');
+  if(existingBanner) existingBanner.remove();
+  const banner = document.createElement('div');
+  banner.id = 'editWarningBanner';
+  banner.className = 'alert alert-warn';
+  banner.style.cssText = 'margin:0 0 16px;';
+  const lmComment = sub.approvals?.lm?.comment || '';
+  banner.innerHTML = `<strong>✏ Editing rejected Run ${idx+1}</strong>${lmComment ? ` — LM comment: <em>"${lmComment}"</em>` : ''}. Correct the fields and click Resubmit.`;
+  const formBody = document.getElementById('stageFormBody');
+  if(formBody) formBody.prepend(banner);
+
+  toast(`Editing Run ${idx+1} — correct and resubmit`, 'info');
+}
+
+// ── POPULATE FORM FROM SAVED DATA ─────────────────────
+function populateForm(stageId, d){
+  if(!d) return;
+  const s = (id, val) => { const el=document.getElementById(id); if(el && val!==undefined && val!==null) el.value=val; };
+  const tbl = (prefix, fields, rows) => {
+    if(!Array.isArray(rows)) return;
+    rows.forEach((row, i) => {
+      fields.forEach(f => {
+        const el = document.querySelector(`[name="${prefix}_${f}_${i+1}"]`);
+        if(el && row[f]!==undefined) el.value = row[f];
+      });
+    });
+  };
+
+  if(stageId==='blending'){
+    s('bl-date',d.date); s('bl-product',d.product); s('bl-batch',d.batch_no);
+    s('bl-blend-lot',d.blend_lot); s('bl-fill-btl',d.fill_lot_bottles); s('bl-fill-can',d.fill_lot_cans); s('bl-shift',d.shift);
+    tbl('cb',['tank','batch','lot','vol','abv','brix','ta','ph','remarks','qc'],d.cider_base);
+    tbl('ri',['name','pct','qty_use','lot','qty_used'],d.recipe?.ingredients);
+    s('bl-exp-vol',d.recipe?.expected_vol); s('bl-act-vol',d.recipe?.actual_vol);
+    tbl('rw',['product','batch','lot','vol'],d.rework?.rows); s('bl-rw-done-by',d.rework?.done_by);
+    s('bl-sg',d.product_chars?.sg); s('bl-pc-brix',d.product_chars?.brix);
+    s('bl-ta',d.product_chars?.ta); s('bl-ph',d.product_chars?.ph); s('bl-pc-by',d.product_chars?.done_by);
+    tbl('sn',['date','name','remarks'],d.sensory_panel);
+    s('bl-bd-tank',d.blending_details?.tank); s('bl-centloss',d.blending_details?.centrifuge_loss);
+    s('bl-ccperiod',d.blending_details?.cc_period); s('bl-cctemp',d.blending_details?.cc_temp);
+    s('bl-ccstart',d.blending_details?.cc_start); s('bl-ccstop',d.blending_details?.cc_stop);
+    s('bl-done-by',d.sign_off?.done_by); s('bl-done-date',d.sign_off?.done_date);
+    s('bl-vfy-by',d.sign_off?.verified_by); s('bl-vfy-date',d.sign_off?.verified_date);
+    calcVolVar();
+  }
+  if(stageId==='filtration'){
+    s('fi-batch',d.batch_no); s('fi-product',d.product); s('fi-date',d.date);
+    tbl('ft',['date','shift','product','stage','filter_type','micron','tank','orig_vol','new_vol','exec_by','conf_by','scrap'],d.filtration?.rows);
+    s('fi-comment',d.filtration?.comment);
+    tbl('ct',['date','product','shift','stage','flow','bp','orig_vol','new_vol','exec_by','conf_by','scrap'],d.centrifuge?.rows);
+    s('fi-init-temp',d.temperature?.initial_temp); s('fi-init-by',d.temperature?.init_done_by);
+    s('fi-init-lead',d.temperature?.init_prod_lead);
+    tbl('ft_t',['date','shift','temp','done_by','prod_lead'],d.temperature?.readings);
+    s('fi-done-by',d.sign_off?.done_by); s('fi-so-date',d.sign_off?.date);
+    s('fi-so-shift',d.sign_off?.shift); s('fi-prod-lead',d.sign_off?.prod_lead);
+    // Recalculate displayed loss values
+    for(let i=1;i<=5;i++) calcFiltLoss(i);
+    for(let i=1;i<=3;i++) calcCentLoss(i);
+    checkInitTemp();
+  }
+  if(stageId==='filling'){
+    s('fl-product',d.product); s('fl-shift',d.shift);
+    const r=d.run||{};
+    s('fl-date',r.date); s('fl-operators',r.operators); s('fl-machine',r.machine);
+    s('fl-batch',r.batch_no); s('fl-sku',r.sku);
+    s('fl-tank-sv',r.tank?.start_vol); s('fl-tank-st',r.tank?.start_temp);
+    s('fl-tank-fv',r.tank?.final_vol); s('fl-tank-ft',r.tank?.final_temp);
+    s('fl-vol-packed',r.vol_packed); s('fl-issue-past',r.issue_past);
+    s('fl-cans-i',r.cans?.issued); s('fl-cans-u',r.cans?.used);
+    s('fl-cans-d',r.cans?.damaged); s('fl-cans-tally',r.cans?.tally);
+    s('fl-caps-i',r.caps?.issued); s('fl-caps-u',r.caps?.used);
+    s('fl-caps-d',r.caps?.damaged); s('fl-caps-tally',r.caps?.tally);
+    s('fl-start',r.timing?.start); s('fl-finish',r.timing?.finish);
+    s('fl-downtime',r.timing?.downtime); s('fl-avail',r.timing?.avail_hrs);
+    s('fl-perf',r.timing?.performance); s('fl-qual',r.timing?.quality);
+    s('fl-fm-s1',r.flow_meter?.start_r1); s('fl-fm-s2',r.flow_meter?.start_r2);
+    s('fl-fm-e1',r.flow_meter?.stop_r1); s('fl-fm-e2',r.flow_meter?.stop_r2);
+    s('fl-conf-by',r.confirmed_by);
+    s('fl-ls-sv',d.loss?.start_vol); s('fl-ls-fv',d.loss?.final_vol);
+    s('fl-ls-cause',d.loss?.causes); s('fl-ls-total',d.loss?.total_loss);
+    s('fl-tmo-name',d.sign_off?.tmo?.name); s('fl-tmo-sign',d.sign_off?.tmo?.sign);
+    s('fl-em-name',d.sign_off?.em?.name); s('fl-em-sign',d.sign_off?.em?.sign);
+    s('fl-pom-name',d.sign_off?.pom?.name); s('fl-pom-sign',d.sign_off?.pom?.sign);
+    calcFillBalance('cans'); calcFillBalance('caps'); calcAvail(); calcFillingLoss();
+  }
+  if(stageId==='pasteur'){
+    s('pa-date',d.date); s('pa-product',d.product); s('pa-batch',d.batch_no);
+    s('pa-sku',d.sku); s('pa-shift',d.shift); s('pa-worker',d.worker);
+    s('pa-issued',d.counts?.issued); s('pa-past',d.counts?.pasteurized);
+    s('pa-damaged',d.counts?.damaged); s('pa-tally',d.tally); s('pa-conf-by',d.confirmed_by);
+    s('pa-tmo-name',d.sign_off?.tmo?.name); s('pa-pom-name',d.sign_off?.pom?.name);
+    calcPasteurMetrics();
+  }
+  if(stageId==='labeling'){
+    s('la-date',d.date); s('la-product',d.product); s('la-batch',d.batch_no); s('la-labellers',d.labellers);
+    s('la-issued',d.counts?.issued); s('la-labeled',d.counts?.labeled); s('la-nonconf',d.counts?.non_conf);
+    s('la-bf-i',d.bottle_labels?.front?.issued); s('la-bf-c',d.bottle_labels?.front?.consumed);
+    s('la-bf-d',d.bottle_labels?.front?.damaged);
+    s('la-bb-i',d.bottle_labels?.back?.issued); s('la-bb-c',d.bottle_labels?.back?.consumed);
+    s('la-bb-d',d.bottle_labels?.back?.damaged);
+    s('la-cf-i',d.can_labels?.full?.issued); s('la-cf-c',d.can_labels?.full?.consumed);
+    s('la-cf-d',d.can_labels?.full?.damaged);
+    s('la-kra',d.kra_applied); s('la-v1',d.verified_by_first); s('la-v2',d.verified_by_final);
+    calcLabelMetrics();
+    ['bf','bb','cf'].forEach(p=>calcLblBal(p));
+  }
+}
+
 let jsonShowing=false;
 function toggleSubModalJson(){
   jsonShowing=!jsonShowing;
@@ -1014,8 +1165,11 @@ async function submitStageForm(){
   const missing=(requiredFields[activeStageId]||[]).filter(id=>!document.getElementById(id)?.value?.trim());
   if(missing.length){toast('Fill in required fields','error');document.getElementById(missing[0])?.scrollIntoView({behavior:'smooth',block:'center'});return}
 
+  // If editing a rejected entry, reuse its ID and preserve resubmit history
+  const isEdit = editingSubIdx !== null;
+  const existingSub = isEdit ? b.stages[activeStageId][editingSubIdx] : null;
   const sub={
-    id:`${activeBatchId}-${activeStageId}-${Date.now()}`,
+    id: existingSub ? existingSub.id : `${activeBatchId}-${activeStageId}-${Date.now()}`,
     stageId:activeStageId,
     stageLabel:s.label,
     batchId:activeBatchId,
@@ -1023,6 +1177,7 @@ async function submitStageForm(){
     submittedAt:new Date().toISOString(),
     status:'pending',
     approvals:{},
+    previousRejection: existingSub ? { approvals:existingSub.approvals, submittedAt:existingSub.submittedAt } : undefined,
     data,
   };
 
@@ -1044,7 +1199,13 @@ async function submitStageForm(){
   if(backdated){
     toast(`⚠ Backdated entry — production date is ${daysLate} day${daysLate!==1?'s':''} ago. Supervisor will be notified.`,'info');
   }
-  b.stages[activeStageId].push(sub);
+  // Overwrite the rejected entry in-place, or append if new
+  if(isEdit){
+    b.stages[activeStageId][editingSubIdx] = sub;
+  } else {
+    b.stages[activeStageId].push(sub);
+  }
+  editingSubIdx = null;
   persist();
 
   // Sync to Apps Script
@@ -1066,8 +1227,9 @@ async function submitStageForm(){
       action:'submitStage',
       batchId:b.id, sku:b.sku||'', line:b.line||'', shift:b.shift||'', date:b.date||'',
       stageId:activeStageId, stageLabel:s.label,
-      runNumber:b.stages[activeStageId].length,
+      runNumber: isEdit ? editingSubIdx+1 : b.stages[activeStageId].length,
       submissionId:sub.id,
+      isResubmission: isEdit,
       backdated, daysLate,
       data, submittedBy:cfg.name, submittedAt:sub.submittedAt,
       approvers:s.approvers, lmEmail:cfg.lmEmail, qcEmail:cfg.lmEmail,
@@ -1086,7 +1248,8 @@ async function submitStageForm(){
     sub.synced = true;
     persist();
     setSyncState('ok','Synced ✓');
-    toast(`✅ ${s.label} Run ${b.stages[activeStageId].length} submitted & sent to Sheet`,'success');
+    const runNum = isEdit ? editingSubIdx+1 : b.stages[activeStageId].length;
+    toast(`✅ ${s.label} Run ${runNum} ${isEdit?'resubmitted':'submitted'} & sent to Sheet`,'success');
 
   }catch(e){
     // Network failure — flag clearly so operator knows to resubmit
@@ -1413,7 +1576,35 @@ function fillingForm(b){
     <div class="field"><label>Operators</label><input type="text" id="fl-operators" placeholder="Operator names"></div>
     <div class="field"><label>Machine Used</label><input type="text" id="fl-machine" placeholder="Machine ID"></div>
     <div class="field"><label>Batch No. <span class="req">*</span></label><input type="text" id="fl-batch" class="mono" value="${b?.id||''}"></div>
-    <div class="field span2"><label>SKU — Bottle / Keg / Can</label><input type="text" id="fl-sku" value="${b?.sku||''}" placeholder="e.g. Savannah Dry 330ml Can"></div>
+    <div class="field span2"><label>SKU — Bottle / Keg / Can</label>
+      <select id="fl-sku">
+        <option value="">— Select SKU —</option>
+        <optgroup label="KO Cider (Bottles)">
+          <option>KO Pineapple and Mint 330ml Bottle</option>
+          <option>KO Passion Fruit and Lime 330ml Bottle</option>
+          <option>KO Lime and Ginger 330ml Bottle</option>
+          <option>KO Honey and Lemon 330ml Bottle</option>
+          <option>KO Mango and Chilli 330ml Bottle</option>
+          <option>KO Dry Cider 330ml Bottle</option>
+        </optgroup>
+        <optgroup label="KO Cider (Cans)">
+          <option>KO Dry Cider 500ml Can</option>
+          <option>KO Mukhombero 10% Gin Cocktail 330ml Can</option>
+        </optgroup>
+        <optgroup label="KO Gin">
+          <option>KO Classic Gin 750ml</option>
+        </optgroup>
+        <optgroup label="58 Gin">
+          <option>58 Classic Gin 37.5% 750ml</option>
+          <option>58 Classic Gin 37.5% 350ml</option>
+          <option>58 Classic 8% G&amp;T 330ml Can</option>
+        </optgroup>
+        <optgroup label="Ember">
+          <option>Ember Pine Poa 35% 250ml</option>
+          <option>Ember Pine Poa 35% 750ml</option>
+        </optgroup>
+      </select>
+    </div>
   </div>
 </div>
 <div class="group-box">
